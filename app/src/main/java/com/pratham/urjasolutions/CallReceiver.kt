@@ -14,62 +14,43 @@ import java.util.*
 
 class CallReceiver : BroadcastReceiver() {
 
-
     override fun onReceive(
         context: Context,
         intent: Intent
     ) {
 
+        if (intent.action == "android.intent.action.PHONE_STATE") {
 
-        if(intent.action == "android.intent.action.PHONE_STATE") {
+            val state = intent.getStringExtra("state")
 
+            if (state == "IDLE") {
 
-            val state =
-                intent.getStringExtra("state")
+                CoroutineScope(Dispatchers.IO).launch {
 
+                    delay(7000)
 
-            if(state == "IDLE") {
-
-
-                CoroutineScope(
-                    Dispatchers.IO
-                ).launch {
-
-
-                    // Android 15 call log update delay
-                    delay(5000)
-
-
-                    sendLatestCall(context)
+                    readLastCall(context)
 
                 }
-
             }
-
         }
-
     }
 
 
-
-    private fun sendLatestCall(
-        context: Context
-    ){
-
+    private fun readLastCall(context: Context) {
 
         val prefs =
             context.getSharedPreferences(
-                "call_logger",
+                "PrathamSolar",
                 Context.MODE_PRIVATE
             )
 
 
-        val lastId =
-            prefs.getString(
-                "last_call_id",
-                ""
+        val lastTime =
+            prefs.getLong(
+                "last_time",
+                0
             )
-
 
 
         val cursor =
@@ -78,13 +59,11 @@ class CallReceiver : BroadcastReceiver() {
                 CallLog.Calls.CONTENT_URI,
 
                 arrayOf(
-
                     CallLog.Calls._ID,
                     CallLog.Calls.NUMBER,
                     CallLog.Calls.TYPE,
                     CallLog.Calls.DURATION,
                     CallLog.Calls.DATE
-
                 ),
 
                 null,
@@ -95,33 +74,22 @@ class CallReceiver : BroadcastReceiver() {
             )
 
 
-
         cursor?.use {
 
-
-            if(it.moveToFirst()){
+            if(it.moveToFirst()) {
 
 
                 val id =
                     it.getString(0)
 
 
-
-                // duplicate stop
-                if(id == lastId)
-                    return
-
-
-
                 val number =
                     it.getString(1)
-                        ?: "Unknown"
+                        ?: ""
 
 
-
-                val typeValue =
+                val type =
                     it.getInt(2)
-
 
 
                 val duration =
@@ -129,9 +97,25 @@ class CallReceiver : BroadcastReceiver() {
                         ?: "0"
 
 
+                val callDate =
+                    it.getLong(4)
+
+
+
+                if(callDate <= lastTime)
+                    return
+
+
+
+                val name =
+                    getName(
+                        context,
+                        number
+                    )
+
 
                 val callType =
-                    when(typeValue){
+                    when(type){
 
                         1 -> "Incoming"
 
@@ -142,23 +126,7 @@ class CallReceiver : BroadcastReceiver() {
                         5 -> "Rejected"
 
                         else -> "Unknown"
-
                     }
-
-
-
-                val name =
-                    getContactName(
-                        context,
-                        number
-                    )
-
-
-
-                val callDate =
-                    Date(
-                        it.getLong(4)
-                    )
 
 
 
@@ -167,8 +135,7 @@ class CallReceiver : BroadcastReceiver() {
                         "dd-MM-yyyy",
                         Locale.getDefault()
                     )
-                    .format(callDate)
-
+                        .format(Date(callDate))
 
 
                 val time =
@@ -176,8 +143,7 @@ class CallReceiver : BroadcastReceiver() {
                         "hh:mm a",
                         Locale.getDefault()
                     )
-                    .format(callDate)
-
+                        .format(Date(callDate))
 
 
 
@@ -185,36 +151,21 @@ class CallReceiver : BroadcastReceiver() {
                     JSONObject()
 
 
+                json.put("date",date)
 
-                json.put(
-                    "date",
-                    date
-                )
+                json.put("time",time)
 
-
-                json.put(
-                    "time",
-                    time
-                )
-
-
-                json.put(
-                    "name",
-                    name
-                )
-
+                json.put("name",name)
 
                 json.put(
                     "mobile",
                     cleanNumber(number)
                 )
 
-
                 json.put(
                     "type",
                     callType
                 )
-
 
                 json.put(
                     "duration",
@@ -223,51 +174,42 @@ class CallReceiver : BroadcastReceiver() {
 
 
 
-                sendToSheet(
-                    json.toString()
-                )
+                send(json.toString())
 
 
 
                 prefs.edit()
-                    .putString(
-                        "last_call_id",
-                        id
+                    .putLong(
+                        "last_time",
+                        callDate
                     )
                     .apply()
 
 
             }
-
         }
-
 
     }
 
 
 
-
     private fun cleanNumber(
         number:String
-    ):String{
-
+    ):String {
 
         return number
             .replace("+91","")
             .replace(" ","")
             .replace("-","")
             .takeLast(10)
-
     }
 
 
 
-
-
-    private fun getContactName(
+    private fun getName(
         context: Context,
-        phone:String
-    ):String{
+        number:String
+    ):String {
 
 
         val cursor =
@@ -283,51 +225,32 @@ class CallReceiver : BroadcastReceiver() {
                 null,
                 null,
                 null
-
             )
-
 
 
         cursor?.use {
 
-
-            while(it.moveToNext()){
-
-
-                val saved =
-                    cleanNumber(
-                        it.getString(1)
-                    )
-
+            while(it.moveToNext()) {
 
                 if(
-                    saved ==
-                    cleanNumber(phone)
+                    cleanNumber(it.getString(1))
+                    ==
+                    cleanNumber(number)
                 ){
 
                     return it.getString(0)
 
                 }
-
-
             }
-
         }
 
 
-
         return "New Customer"
-
     }
 
 
 
-
-
-    private fun sendToSheet(
-        data:String
-    ){
-
+    private fun send(data:String) {
 
 
         val url =
@@ -336,42 +259,29 @@ class CallReceiver : BroadcastReceiver() {
             )
 
 
-
-        val connection =
+        val con =
             url.openConnection()
                     as HttpURLConnection
 
 
+        con.requestMethod="POST"
 
-        connection.requestMethod =
-            "POST"
+        con.doOutput=true
 
-
-
-        connection.doOutput =
-            true
-
-
-
-        connection.setRequestProperty(
+        con.setRequestProperty(
             "Content-Type",
             "application/json"
         )
 
 
-
-        connection.outputStream.use {
+        con.outputStream.use {
 
             it.write(
                 data.toByteArray()
             )
-
         }
 
 
-
-        connection.responseCode
-
+        con.responseCode
     }
-
 }
