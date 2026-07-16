@@ -5,12 +5,16 @@ import android.content.Context
 import android.content.Intent
 import android.provider.CallLog
 import android.provider.ContactsContract
-import kotlinx.coroutines.*
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
 import java.text.SimpleDateFormat
-import java.util.*
+import java.util.Date
+import java.util.Locale
 
 class CallReceiver : BroadcastReceiver() {
 
@@ -18,7 +22,7 @@ class CallReceiver : BroadcastReceiver() {
     companion object {
 
         @Volatile
-        private var isProcessing = false
+        private var isRunning = false
 
     }
 
@@ -29,6 +33,7 @@ class CallReceiver : BroadcastReceiver() {
         intent: Intent
     ) {
 
+
         if (intent.action == "android.intent.action.PHONE_STATE") {
 
 
@@ -36,19 +41,17 @@ class CallReceiver : BroadcastReceiver() {
                 intent.getStringExtra("state")
 
 
+
             if (state == "IDLE") {
-
-
-                if (isProcessing) return
 
 
                 CoroutineScope(Dispatchers.IO).launch {
 
 
-                    delay(4000)
+                    delay(5000)
 
 
-                    processCall(context)
+                    sendLatestCall(context)
 
 
                 }
@@ -63,15 +66,17 @@ class CallReceiver : BroadcastReceiver() {
 
 
 
-    private fun processCall(
+    private fun sendLatestCall(
         context: Context
     ) {
 
 
-        if (isProcessing) return
+        if (isRunning) {
+            return
+        }
 
 
-        isProcessing = true
+        isRunning = true
 
 
 
@@ -86,9 +91,9 @@ class CallReceiver : BroadcastReceiver() {
 
 
 
-            val lastId =
+            val lastCallId =
                 prefs.getString(
-                    "last_id",
+                    "last_call_id",
                     ""
                 )
 
@@ -97,7 +102,9 @@ class CallReceiver : BroadcastReceiver() {
             val cursor =
                 context.contentResolver.query(
 
+
                     CallLog.Calls.CONTENT_URI,
+
 
                     arrayOf(
 
@@ -109,10 +116,13 @@ class CallReceiver : BroadcastReceiver() {
 
                     ),
 
+
                     null,
                     null,
 
+
                     "${CallLog.Calls.DATE} DESC"
+
 
                 )
 
@@ -121,7 +131,7 @@ class CallReceiver : BroadcastReceiver() {
             cursor?.use {
 
 
-                if(it.moveToFirst()) {
+                if (it.moveToFirst()) {
 
 
                     val id =
@@ -129,57 +139,69 @@ class CallReceiver : BroadcastReceiver() {
 
 
 
-                    if(id == lastId) {
+                    if (id == lastCallId) {
+
 
                         return
+
 
                     }
 
 
 
                     val number =
-                        it.getString(1) ?: ""
+                        it.getString(1)
+                            ?: ""
 
 
 
-                    val type =
+                    val typeValue =
                         it.getInt(2)
 
 
 
                     val duration =
-                        it.getString(3) ?: "0"
+                        it.getString(3)
+                            ?: "0"
 
 
 
-                    val dateTime =
+                    val callTime =
                         it.getLong(4)
 
 
 
-                    val mobile =
+                    val cleanMobile =
                         cleanNumber(number)
 
 
 
-                    val customerName =
-                        getName(
+                    val name =
+                        getContactName(
                             context,
-                            mobile
+                            cleanMobile
                         )
 
 
 
                     val callType =
-                        when(type) {
+                        when(typeValue) {
+
 
                             1 -> "Incoming"
 
+
                             2 -> "Outgoing"
+
 
                             3 -> "Missed"
 
+
+                            5 -> "Rejected"
+
+
                             else -> "Unknown"
+
 
                         }
 
@@ -188,71 +210,74 @@ class CallReceiver : BroadcastReceiver() {
                     val remarks =
                         when(callType) {
 
+
                             "Missed" ->
                                 "Auto Greeting Pending"
+
 
                             "Incoming" ->
                                 "Customer Talked"
 
+
                             "Outgoing" ->
                                 "Follow Up Call"
 
+
                             else ->
                                 ""
+
 
                         }
 
 
 
-                    val whatsappNumber =
-                        "+91$mobile"
+                    val date =
+                        SimpleDateFormat(
+                            "dd-MM-yyyy",
+                            Locale.getDefault()
+                        )
+                            .format(
+                                Date(callTime)
+                            )
+
+
+
+                    val time =
+                        SimpleDateFormat(
+                            "hh:mm a",
+                            Locale.getDefault()
+                        )
+                            .format(
+                                Date(callTime)
+                            )
 
 
 
                     val json =
                         JSONObject()
 
-
-
-                    json.put(
+                                            json.put(
                         "date",
-                        SimpleDateFormat(
-                            "dd-MM-yyyy",
-                            Locale.getDefault()
-                        ).format(Date(dateTime))
+                        date
                     )
-
 
 
                     json.put(
                         "time",
-                        SimpleDateFormat(
-                            "hh:mm a",
-                            Locale.getDefault()
-                        ).format(Date(dateTime))
+                        time
                     )
-
 
 
                     json.put(
                         "name",
-                        customerName
+                        name
                     )
-
 
 
                     json.put(
                         "mobile",
-                        mobile
+                        cleanMobile
                     )
-
-
-
-                    json.put(
-                        "whatsappNumber",
-                        whatsappNumber
-                    )
-
 
 
                     json.put(
@@ -261,12 +286,10 @@ class CallReceiver : BroadcastReceiver() {
                     )
 
 
-
                     json.put(
                         "duration",
                         duration
                     )
-
 
 
                     json.put(
@@ -274,17 +297,21 @@ class CallReceiver : BroadcastReceiver() {
                         remarks
                     )
 
+
+
                     sendToSheet(
                         json.toString()
                     )
 
 
+
                     prefs.edit()
                         .putString(
-                            "last_id",
+                            "last_call_id",
                             id
                         )
                         .apply()
+
 
 
                 }
@@ -292,13 +319,15 @@ class CallReceiver : BroadcastReceiver() {
             }
 
 
-        } finally {
+        }
+        finally {
 
 
-            isProcessing = false
+            isRunning = false
 
 
         }
+
 
     }
 
@@ -307,17 +336,16 @@ class CallReceiver : BroadcastReceiver() {
 
 
     private fun cleanNumber(
-        number: String
-    ): String {
+        number:String
+    ):String {
 
 
         return number
-            .replace("+91", "")
-            .replace(" ", "")
-            .replace("-", "")
-            .replace("(", "")
-            .replace(")", "")
+            .replace("+91","")
+            .replace(" ","")
+            .replace("-","")
             .takeLast(10)
+
 
     }
 
@@ -325,16 +353,18 @@ class CallReceiver : BroadcastReceiver() {
 
 
 
-    private fun getName(
+    private fun getContactName(
         context: Context,
-        number: String
-    ): String {
+        phone:String
+    ):String {
 
 
         val cursor =
             context.contentResolver.query(
 
+
                 ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
+
 
                 arrayOf(
 
@@ -343,11 +373,14 @@ class CallReceiver : BroadcastReceiver() {
 
                 ),
 
+
                 null,
                 null,
                 null
 
+
             )
+
 
 
         cursor?.use {
@@ -362,7 +395,8 @@ class CallReceiver : BroadcastReceiver() {
                     )
 
 
-                if(savedNumber == number) {
+
+                if(savedNumber == phone) {
 
 
                     return it.getString(0)
@@ -377,7 +411,9 @@ class CallReceiver : BroadcastReceiver() {
         }
 
 
-        return "New Lead"
+
+        return "New Customer"
+
 
     }
 
@@ -386,67 +422,56 @@ class CallReceiver : BroadcastReceiver() {
 
 
     private fun sendToSheet(
-        data: String
+        data:String
     ) {
 
 
-        try {
+        val url =
+            URL(
 
+                "https://script.google.com/macros/s/AKfycbx7C7EdLEDFCvzFEfOtkGCwA67vg8tNMxIKaDRpLf89dLBKVyRirV0oyIgdY0pS2nyE/exec"
 
-            val url =
-                URL(
-                    "https://script.google.com/macros/s/AKfycbx7C7EdLEDFCvzFEfOtkGCwA67vg8tNMxIKaDRpLf89dLBKVyRirV0oyIgdY0pS2nyE/exec"
-                )
-
-
-
-            val con =
-                url.openConnection()
-                        as HttpURLConnection
-
-
-
-            con.requestMethod =
-                "POST"
-
-
-
-            con.doOutput =
-                true
-
-
-
-            con.setRequestProperty(
-                "Content-Type",
-                "application/json"
             )
 
 
 
-            con.outputStream.use {
-
-
-                it.write(
-                    data.toByteArray()
-                )
-
-
-            }
+        val connection =
+            url.openConnection()
+                    as HttpURLConnection
 
 
 
-            con.responseCode
+        connection.requestMethod =
+            "POST"
 
+
+
+        connection.doOutput =
+            true
+
+
+
+        connection.setRequestProperty(
+            "Content-Type",
+            "application/json"
+        )
+
+
+
+        connection.outputStream.use {
+
+
+            it.write(
+                data.toByteArray()
+            )
 
 
         }
-        catch(e: Exception) {
 
 
-            e.printStackTrace()
 
+        connection.responseCode
 
-        }
 
     }
 
