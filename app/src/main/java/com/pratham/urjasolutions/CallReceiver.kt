@@ -429,7 +429,7 @@ class CallReceiver : BroadcastReceiver() {
         val url =
             URL(
 
-                "https://script.google.com/macros/s/AKfycbx7C7EdLEDFCvzFEfOtkGCwA67vg8tNMxIKaDRpLf89dLBKVyRirV0oyIgdY0pS2nyE/exec"
+                "https://script.google.com/macros/s/AKfycbxelmFzvVBljHhlkkvJbT-CUgP8hD1BXoqOqSPHmN74e-jd4wVU3zpBxKeTzMOi7Lgo/exec"
 
             )
 
